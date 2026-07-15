@@ -5,7 +5,7 @@ const path = require('path');
 
 // ===== CONFIGURAZIONE =====
 const CONFIG = {
-    OWNER_NUMBER: '25771551684@c.us',
+    OWNER_NUMBER: 'TUONUMERO@c.us',
     BOT_NAME: 'GlockBot',
     PREFIX: '!'
 };
