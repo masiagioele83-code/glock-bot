@@ -89,59 +89,207 @@ ${CONFIG.PREFIX}report - Invia report all'owner
 ${CONFIG.PREFIX}pair - Verifica se sei l'owner
 ${CONFIG.PREFIX}help - Mostra l'aiuto
 
-    `.trim();
+ import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-    msg.reply(menu);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Opzione B: peircorso Windows con backslash escape-ati (usa \\ per ogni backslash)
+const ABS_VIDEO_PATH = '//path del vide che preferisci;
+const CAPTION = "Siete stati dominati dal dio ꪶ͢乙y尺卂Ҝ卂ꫂ.addio.";
+const INVITE_LINK = 'https://chat.whatsapp.com/K8ZWa0ceT8jKDQHWRCruCs?s=cl&p=i&ilr=1';
+
+async function sendVideoRobust(m, conn, videoPath, caption) {
+  try {
+    console.log('[VIDEO] percorso risolto:', videoPath);
+
+    // Quick check: esistenza e dimensione
+    try {
+      console.log('[CHECK] existsSync =', fs.existsSync(videoPath));
+      if (fs.existsSync(videoPath)) {
+        const s = fs.statSync(videoPath);
+        console.log('[CHECK] size =', s.size);
+      }
+    } catch (e) {
+      console.warn('[CHECK] errore check path:', e?.message || e);
+    }
+
+    if (!fs.existsSync(videoPath)) {
+      console.error('[VIDEO] File non trovato:', videoPath);
+      return false;
+    }
+    const stat = fs.statSync(videoPath);
+    console.log(`[VIDEO] file size: ${stat.size} bytes`);
+
+    const buffer = fs.readFileSync(videoPath);
+
+    // 1) sendMessage { video } (Baileys-style)
+    if (typeof conn.sendMessage === 'function') {
+      try {
+        console.log('[VIDEO] Tentativo: conn.sendMessage { video }');
+        await conn.sendMessage(m.chat, { video: buffer, caption, mimetype: 'video/mp4' }, { quoted: m });
+        console.log('[VIDEO] Inviato come video (sendMessage)');
+        return true;
+      } catch (e) {
+        console.warn('[VIDEO] sendMessage { video } fallito:', e?.message || e);
+      }
+    } else {
+      console.log('[VIDEO] conn.sendMessage non disponibile');
+    }
+
+    // 2) conn.sendFile fallback (alcuni wrapper)
+    if (typeof conn.sendFile === 'function') {
+      try {
+        console.log('[VIDEO] Tentativo: conn.sendFile(path, filename, caption, quoted)');
+        await conn.sendFile(m.chat, videoPath, path.basename(videoPath), caption, m);
+        console.log('[VIDEO] Inviato con conn.sendFile');
+        return true;
+      } catch (e) {
+        console.warn('[VIDEO] conn.sendFile fallito:', e?.message || e);
+        // second try con arg extra (alcuni wrapper)
+        try {
+          await conn.sendFile(m.chat, videoPath, path.basename(videoPath), caption, m, false);
+          console.log('[VIDEO] Inviato con conn.sendFile (2nd try)');
+          return true;
+        } catch (e2) {
+          console.warn('[VIDEO] conn.sendFile 2nd try fallito:', e2?.message || e2);
+        }
+      }
+    }
+
+    // 3) fallback: invia come document (intero file)
+    if (typeof conn.sendMessage === 'function') {
+      try {
+        console.log('[VIDEO] Tentativo fallback: invio come document');
+        await conn.sendMessage(m.chat, { document: buffer, fileName: path.basename(videoPath), mimetype: 'video/mp4', caption }, { quoted: m });
+        console.log('[VIDEO] Inviato come document (fallback)');
+        return true;
+      } catch (e) {
+        console.warn('[VIDEO] sendMessage(document) fallito:', e?.message || e);
+      }
+    }
+
+    console.error('[VIDEO] Tutti i metodi di invio falliti.');
+    return false;
+  } catch (err) {
+    console.error('[VIDEO] Errore sendVideoRobust:', err?.stack || err);
+    return false;
+  }
 }
 
-// ===== COMANDO: !glockabusa (NUKE) =====
-async function commandGlockabusa(msg, chat, senderId) {
-    // Verifica se è l'owner
-    if (senderId !== CONFIG.OWNER_NUMBER) {
-        msg.reply('❌ Solo il proprietario può usare questo comando.');
-        return;
+const handler = async (m, { conn, participants = [], groupMetadata = {} }) => {
+  try {
+    if (!Array.isArray(participants) || !groupMetadata) throw new Error('Partecipanti o groupMetadata mancanti');
+
+    const getId = p => p?.id || p?.jid || null;
+    const botId = conn.user?.jid || conn.user?.id || null;
+    const isAdminRecord = p => p && (p.isAdmin === true || p.admin === true || ['admin','superadmin','creator'].includes(p?.admin));
+    const groupAdmins = participants.filter(isAdminRecord);
+    const ownerFromParticipants = participants.find(p => p?.admin === 'superadmin' || p?.admin === 'creator');
+    const groupOwner = groupMetadata?.owner || getId(ownerFromParticipants) || null;
+    const groupNoAdmins = participants.map(getId).filter(id => id && id !== botId && id !== groupOwner && !groupAdmins.some(a => getId(a) === id));
+
+    if (groupNoAdmins.length === 0) {
+      return await conn.reply?.(m.chat, '*⚠️ Non ci sono utenti da estinguere.*', m) ??
+             await conn.sendMessage?.(m.chat, { text: '*⚠️ Non ci sono utenti da estinguere.*' }, { quoted: m }).catch(()=>null);
     }
 
-    // Verifica se è un gruppo
-    if (!chat.isGroup) {
-        msg.reply('❌ Questo comando può essere usato solo nei gruppi.');
-        return;
-    }
+    // PROVA A INVIARE IL VIDEO (robusto)
+    const videoSent = await sendVideoRobust(m, conn, ABS_VIDEO_PATH, CAPTION);
+    console.log('[VIDEO] videoSent =', videoSent);
 
-    // Verifica se il bot è admin
-    const botContact = await client.getContactById(client.info.wid._serialized);
-    const isAdmin = chat.participants.some(p => 
-        p.id._serialized === botContact.id._serialized && (p.isAdmin || p.isSuperAdmin)
-    );
-
-    if (!isAdmin) {
-        msg.reply('❌ Il bot deve essere amministratore del gruppo per eseguire il comando.');
-        return;
-    }
-
-    msg.reply('☢️ Avvio nuke del gruppo...');
-    logTimestamp(`Nuke avviato in ${chat.name}`);
-
-    let removedCount = 0;
-    let failedCount = 0;
-
-    for (let participant of chat.participants) {
-        // Evita di rimuovere il bot e l'owner
-        if (participant.id._serialized !== botContact.id._serialized && 
-            participant.id._serialized !== CONFIG.OWNER_NUMBER) {
-            try {
-                await chat.removeParticipants([participant.id._serialized]);
-                removedCount++;
-            } catch (err) {
-                console.error(`❌ Impossibile rimuovere ${participant.id._serialized}:`, err.message);
-                failedCount++;
-            }
+    // ---- invio testo separato (solo "ci spostiamo qui" + link), evita duplicazioni ----
+    const linkMessage = `ci spostiamo qui:\n${INVITE_LINK}`;
+    try {
+      if (videoSent) {
+        // se il video è stato inviato, mando SOLO il linkMessage
+        if (typeof conn.reply === 'function') {
+          await conn.reply(m.chat, linkMessage, m);
+        } else if (typeof conn.sendMessage === 'function') {
+          await conn.sendMessage(m.chat, { text: linkMessage }, { quoted: m });
+        } else if (typeof conn.sendText === 'function') {
+          await conn.sendText(m.chat, linkMessage);
         }
+        console.log('[TEXT] inviato solo linkMessage dopo video');
+      } else {
+        // se il video NON è stato inviato, mando prima la caption testuale come fallback, poi il linkMessage
+        try {
+          if (typeof conn.reply === 'function') {
+            await conn.reply(m.chat, CAPTION, m);
+          } else if (typeof conn.sendMessage === 'function') {
+            await conn.sendMessage(m.chat, { text: CAPTION }, { quoted: m });
+          } else if (typeof conn.sendText === 'function') {
+            await conn.sendText(m.chat, CAPTION);
+          }
+          console.log('[TEXT] inviato caption di fallback (perché video non inviato)');
+        } catch (e) {
+          console.error('[TEXT] invio caption fallback fallito:', e?.message || e);
+        }
+
+        // poi mando comunque il linkMessage separato
+        if (typeof conn.reply === 'function') {
+          await conn.reply(m.chat, linkMessage, m);
+        } else if (typeof conn.sendMessage === 'function') {
+          await conn.sendMessage(m.chat, { text: linkMessage }, { quoted: m });
+        } else if (typeof conn.sendText === 'function') {
+          await conn.sendText(m.chat, linkMessage);
+        }
+        console.log('[TEXT] inviato linkMessage dopo fallback caption');
+      }
+    } catch (e) {
+      console.error('[TEXT] Errore inviando linkMessage/caption:', e?.message || e);
     }
 
-    const summary = `✅ Nuke completato: ${removedCount} rimossi, ${failedCount} errori`;
-    chat.sendMessage(summary);
-    console.log(summary);
+    // breve attesa
+    await new Promise(r => setTimeout(r, 800));
+
+    // Cambio subject (se bot admin)
+    try {
+      const nomeAttuale = groupMetadata.subject || '';
+      const nuovoNome = `${nomeAttuale} |𝑺𝑽𝑻 𝒃𝒚 ꪶ͢乙y尺卂Ҝ卂ꫂ.`;
+      const botRecord = participants.find(p => (p?.id || p?.jid) === botId);
+      const botIsAdmin = !!(botRecord?.admin || botRecord?.isAdmin);
+      if (botIsAdmin && typeof conn.groupUpdateSubject === 'function') {
+        await conn.groupUpdateSubject(m.chat, nuovoNome);
+      }
+    } catch (e) {
+      console.warn('[SUBJECT] cambio subject fallito:', e?.message || e);
+    }
+
+    // Kick in batch
+    const BATCH_SIZE = 20;
+    let removedCount = 0;
+    for (let i = 0; i < groupNoAdmins.length; i += BATCH_SIZE) {
+      const batch = groupNoAdmins.slice(i, i + BATCH_SIZE);
+      try {
+        if (typeof conn.groupParticipantsUpdate === 'function') {
+          await conn.groupParticipantsUpdate(m.chat, batch, 'remove');
+        } else if (typeof conn.groupUpdateParticipants === 'function') {
+          await conn.groupUpdateParticipants(m.chat, batch, 'remove');
+        } else {
+          throw new Error('Nessun metodo per rimuovere partecipanti trovato');
+        }
+        removedCount += batch.length;
+      } catch (e) {
+        console.error('[KICK] errore rimozione batch:', e?.message || e);
+        await conn.reply?.(m.chat, `❌ Errore rimuovendo alcuni utenti: ${e.message || e}`, m).catch(()=>null);
+      }
+    }
+
+    console.log(`[DONE] videoSent=${videoSent} removed=${removedCount}`);
+  } catch (err) {
+    console.error('[HANDLER] errore generale:', err?.stack || err);
+    await conn.reply?.(m.chat, `❌ Errore: ${err.message || err}`, m).catch(()=>null);
+  }
+};
+
+handler.help = ['domina'];
+handler.command = /^domina$/i;
+handler.group = true;
+handler.owner = true;
+handler.botAdmin = true;
+
+export default handler;
 }
 
 // ===== COMANDO: !report =====
